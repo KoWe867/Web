@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Neun Apps, ein Takt</title>
+<link rel="icon" href="data:,">
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;color:#f5f5f7;font:16px -apple-system,Inter,"Helvetica Neue",Arial,sans-serif}
+  body{display:grid;place-items:center}
+  canvas{width:min(100vw,177.78vh);height:auto;aspect-ratio:16/9;display:block}
+  #ov{position:fixed;inset:0;display:grid;place-content:center;gap:14px;text-align:center;background:rgba(0,0,0,.82);padding:0 16px;-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
+  #ov h1{margin:0;font-weight:800;font-size:clamp(30px,6vw,72px);letter-spacing:-.02em}
+  #ov p{margin:0;color:#a1a1a8;max-width:34em}
+  #go{justify-self:center;margin-top:8px;padding:14px 34px;border:0;border-radius:999px;background:#0a84ff;color:#fff;font:600 19px inherit;font-family:inherit;cursor:pointer}
+  #go:disabled{background:#2c2c2e;color:#8e8e93;cursor:wait}
+  #go:focus-visible{outline:3px solid #fff;outline-offset:3px}
+  #hint{position:fixed;left:0;right:0;bottom:6px;text-align:center;font-size:12px;opacity:.4;pointer-events:none}
+</style>
+</head>
+<body>
+<canvas id="stage" width="1920" height="1080" aria-label="Musikvideo: Neun Apps, ein Takt"></canvas>
+<div id="ov" role="dialog" aria-label="Start">
+  <h1>Neun Apps. Ein Takt.</h1>
+  <p>Ein Musikvideo im Apple-Stil. Jede Karte und jeder Frame wird in JavaScript gezeichnet, passend zur Musik.</p>
+  <p id="msg">Lade Musik und Schrift …</p>
+  <button id="go" disabled>Start</button>
+</div>
+<div id="hint">Leertaste: Pause · ← / →: ±5 s · F: Vollbild</div>
+<script src="engine.js"></script>
+<script src="cards.js"></script>
+<script src="scene.js"></script>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search), cv = document.getElementById('stage'), ov = document.getElementById('ov'), go = document.getElementById('go'), msg = document.getElementById('msg');
+  var A, vid, buf, actx, gain, src, t0 = 0, playing = false, DUR = Scene.DUR;
+
+  function frame() {
+    if (!playing) return;
+    var t = actx.currentTime - t0;
+    if (t >= DUR) { playing = false; vid.seek(DUR - 0.001); msg.textContent = 'Nochmal?'; go.textContent = 'Neu starten'; ov.style.display = 'grid'; return; }
+    vid.seek(t); requestAnimationFrame(frame);
+  }
+  function startAt(from) {
+    if (src) { try { src.stop(); } catch (e) {} }
+    if (!actx) { actx = new (window.AudioContext || window.webkitAudioContext)(); gain = actx.createGain(); gain.connect(actx.destination); }
+    src = actx.createBufferSource(); src.buffer = buf; src.connect(gain); actx.resume(); src.start(0, from); t0 = actx.currentTime - from;
+    gain.gain.cancelScheduledValues(0); gain.gain.setValueAtTime(1, actx.currentTime);
+    var fs = actx.currentTime + (DUR - 2 - from); if (fs > actx.currentTime) { gain.gain.setValueAtTime(1, fs); gain.gain.linearRampToValueAtTime(0, fs + 1.9); }
+    ov.style.display = 'none'; if (!playing) { playing = true; requestAnimationFrame(frame); }
+  }
+  function toggle() { if (actx && ov.style.display === 'none') { if (actx.state === 'running') actx.suspend(); else actx.resume(); } }
+  go.addEventListener('click', function () { playing = false; startAt(0); });
+  cv.addEventListener('click', toggle);
+  addEventListener('keydown', function (e) {
+    if (e.code === 'Space') { e.preventDefault(); toggle(); }
+    else if ((e.code === 'ArrowRight' || e.code === 'ArrowLeft') && actx) startAt(Math.max(0, Math.min(DUR - 0.2, actx.currentTime - t0 + (e.code === 'ArrowRight' ? 5 : -5))));
+    else if (e.code === 'KeyF') { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); }
+  });
+
+  async function boot() {
+    var fonts = [300, 500, 600, 700, 800].map(function (w) { return new FontFace('Inter', 'url(assets/fonts/inter-' + w + '.woff2)', { weight: String(w) }).load().then(function (f) { document.fonts.add(f); }, function () { return null; }); });
+    await Promise.all(fonts);
+    var L, R, sr = 44100;
+    try {
+      var data = await (await fetch('assets/electro-dreams.mp3')).arrayBuffer();
+      buf = await new OfflineAudioContext(2, 44100, 44100).decodeAudioData(data);
+      L = buf.getChannelData(0); R = buf.numberOfChannels > 1 ? buf.getChannelData(1) : L; sr = buf.sampleRate;
+    } catch (e) {
+      msg.textContent = 'Musik fehlt: bitte ./fetch_assets.sh ausführen (lädt „Electro Dreams“ von Arulo, Mixkit).';
+      L = R = new Float32Array(sr * 60); buf = new OfflineAudioContext(2, sr * 60, sr).createBuffer(2, sr * 60, sr);
+    }
+    A = Engine.Analysis(L, R, sr); vid = Scene.create(cv, A, { fps: +q.get('fps') || 30 });
+    window.seek = function (x) { vid.seek(x); }; window.audioInfo = { sr: sr, n: L.length }; window.analysis = A; window.ready = true;
+    var tt = q.get('t');
+    if (tt !== null || q.has('render')) { ov.style.display = 'none'; document.getElementById('hint').style.display = 'none'; vid.seek(+tt || 0); return; }
+    if (L.length > sr * 30) { msg.textContent = 'Bereit.'; go.disabled = false; go.focus(); }
+    vid.seek(17.5);
+  }
+  boot();
+})();
+</script>
+</body>
+</html>
