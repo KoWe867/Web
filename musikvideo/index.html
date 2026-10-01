@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Frame = f(t)</title>
+<link rel="icon" href="data:,">
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;color:#cfeaff;font:16px ui-monospace,"DejaVu Sans Mono",Menlo,Consolas,monospace}
+  body{display:grid;place-items:center}
+  canvas{width:min(100vw,177.78vh);height:auto;aspect-ratio:16/9;display:block}
+  #ov{position:fixed;inset:0;display:grid;place-content:center;gap:14px;text-align:center;background:rgba(3,0,12,.86);cursor:pointer;padding:0 16px}
+  #ov h1{margin:0;font:900 clamp(28px,6vw,72px)/1.05 "Arial Black",Impact,sans-serif;letter-spacing:.02em;color:#fff;text-shadow:-3px 0 #19f3ff,3px 0 #ff2e97}
+  #ov p{margin:0;opacity:.8}
+  #go{justify-self:center;margin-top:8px;padding:12px 28px;border:2px solid #19f3ff;border-radius:999px;background:transparent;color:#19f3ff;font:inherit;font-size:20px;cursor:pointer}
+  #go:disabled{opacity:.5;cursor:wait}
+  #go:focus-visible{outline:3px solid #ffd24a;outline-offset:3px}
+  #hint{position:fixed;left:0;right:0;bottom:6px;text-align:center;font-size:12px;opacity:.45;pointer-events:none}
+</style>
+</head>
+<body>
+<canvas id="stage" width="1920" height="1080" aria-label="Musikvideo: Frame = f(t)"></canvas>
+<div id="ov" role="dialog" aria-label="Start">
+  <h1>FRAME = f(t)</h1>
+  <p>Ein Musikvideo, in dem jeder Frame und jeder Ton reines JavaScript ist.</p>
+  <p id="msg">Berechne Musik …</p>
+  <button id="go" disabled>▶ Start</button>
+</div>
+<div id="hint">Leertaste: Pause · ← / →: ±5 s · F: Vollbild</div>
+<script src="song.js"></script>
+<script src="video.js"></script>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search), cv = document.getElementById('stage');
+  var ov = document.getElementById('ov'), go = document.getElementById('go'), msg = document.getElementById('msg');
+  var song, vid, actx, src, t0 = 0, playing = false, pausedAt = 0;
+
+  function frame() {
+    if (!playing) return;
+    var t = actx.currentTime - t0;
+    if (t >= song.duration) { playing = false; vid.seek(song.duration); msg.textContent = 'Nochmal?'; go.textContent = '↻ Neu starten'; ov.style.display = 'grid'; return; }
+    vid.seek(t); requestAnimationFrame(frame);
+  }
+  function startAt(from) {
+    if (src) { try { src.onended = null; src.stop(); } catch (e) {} }
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: song.sr });
+    var buf = actx.createBuffer(2, song.n, song.sr); buf.copyToChannel(song.L, 0); buf.copyToChannel(song.R, 1);
+    src = actx.createBufferSource(); src.buffer = buf; src.connect(actx.destination);
+    actx.resume(); src.start(0, from); t0 = actx.currentTime - from; ov.style.display = 'none';
+    if (!playing) { playing = true; requestAnimationFrame(frame); }
+  }
+  function toggle() {
+    if (!actx || ov.style.display !== 'none') return;
+    if (actx.state === 'running') { actx.suspend(); } else { actx.resume(); }
+  }
+  go.addEventListener('click', function (e) { e.stopPropagation(); playing = false; startAt(0); });
+  cv.addEventListener('click', toggle);
+  addEventListener('keydown', function (e) {
+    if (e.code === 'Space') { e.preventDefault(); toggle(); }
+    else if (e.code === 'ArrowRight' || e.code === 'ArrowLeft') { if (actx) { var t = Math.max(0, Math.min(song.duration - 0.1, actx.currentTime - t0 + (e.code === 'ArrowRight' ? 5 : -5))); startAt(t); } }
+    else if (e.code === 'KeyF') { if (document.fullscreenElement) document.exitFullscreen(); else document.documentElement.requestFullscreen(); }
+  });
+
+  // Erst die Oberfläche zeigen, dann rechnen (Synthese dauert ein paar Sekunden)
+  setTimeout(function () {
+    var t = performance.now(); song = Song.build();
+    vid = Video.create(cv, song, { fps: +q.get('fps') || 30 });
+    window.seek = function (x) { vid.seek(x); }; window.song = song; window.ready = true;
+    msg.textContent = 'Musik berechnet in ' + ((performance.now() - t) / 1000).toFixed(1) + ' s · ' + song.events.notes.length + ' Noten';
+    var tt = q.get('t');
+    if (tt !== null || q.has('render')) { ov.style.display = 'none'; document.getElementById('hint').style.display = 'none'; vid.seek(+tt || 0); return; }
+    vid.seek(6.5); go.disabled = false; go.focus();
+  }, 60);
+})();
+</script>
+</body>
+</html>
